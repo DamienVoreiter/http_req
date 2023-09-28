@@ -36,3 +36,6 @@ optional = true
 [dependencies.webpki-roots]
 version = "^0.25"
 optional = true
+
+[patch.crates-io]
+rustls = { git = "https://github.com/DamienVoreiter/rustls.git", branch = "tls12-renegotiation_0_21_7" }
