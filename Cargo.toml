@@ -49,4 +49,4 @@ features = ["alloc"]
 optional = true
 
 [patch.crates-io]
-rustls = { git = "https://github.com/DamienVoreiter/rustls", rev = "d65fd36283f81c47e6601c72da6fcbbaaa937f99"}
+rustls = { git = "https://github.com/DamienVoreiter/rustls", rev = "f0c30edf686d7d0f7e7a39e842deb371818a2f08"}
