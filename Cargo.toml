@@ -22,7 +22,7 @@ version = "^0.2"
 optional = true
 
 [dependencies.rustls]
-version = "^0.19"
+version = "^0.17"
 optional = true
 
 [dependencies.webpki]
@@ -32,3 +32,6 @@ optional = true
 [dependencies.webpki-roots]
 version = "^0.21"
 optional = true
+
+[patch.crates-io]
+rustls = { git = "https://github.com/DamienVoreiter/rustls", rev = "f0c30edf686d7d0f7e7a39e842deb371818a2f08"}
