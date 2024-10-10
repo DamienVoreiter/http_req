@@ -28,7 +28,7 @@ version = "^0.2"
 optional = true
 
 [dependencies.rustls]
-version = "^0.23"
+version = "^0.17"
 optional = true
 
 [dependencies.rustls-pemfile]
@@ -47,3 +47,6 @@ optional = true
 version = "^1.7"
 features = ["alloc"]
 optional = true
+
+[patch.crates-io]
+rustls = { git = "https://github.com/DamienVoreiter/rustls", rev = "d65fd36283f81c47e6601c72da6fcbbaaa937f99"}
