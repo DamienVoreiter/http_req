@@ -1,10 +1,17 @@
 //! TCP stream
 
-use crate::{error::Error, tls, tls::Conn, uri::Uri, CR_LF, LF};
+#[cfg(any(feature = "native-tls", feature = "rust-tls"))]
+use crate::tls::{self, Conn};
+use crate::{
+    error::{Error, ParseErr},
+    uri::Uri,
+    CR_LF, LF,
+};
+#[cfg(any(feature = "native-tls", feature = "rust-tls"))]
+use std::path::Path;
 use std::{
     io::{self, BufRead, Read, Write},
     net::{TcpStream, ToSocketAddrs},
-    path::Path,
     sync::mpsc::{Receiver, RecvTimeoutError, Sender},
     time::{Duration, Instant},
 };
@@ -16,22 +23,14 @@ const BUF_SIZE: usize = 16 * 1000;
 #[derive(Debug)]
 pub enum Stream {
     Http(TcpStream),
+    #[cfg(any(feature = "native-tls", feature = "rust-tls"))]
     Https(Conn<TcpStream>),
 }
 
 impl Stream {
     /// Opens a TCP connection to a remote host with a connection timeout (if specified).
-    #[deprecated(
-        since = "0.12.0",
-        note = "Stream::new(uri, connect_timeout) was replaced with Stream::connect(uri, connect_timeout)"
-    )]
-    pub fn new(uri: &Uri, connect_timeout: Option<Duration>) -> Result<Stream, Error> {
-        Stream::connect(uri, connect_timeout)
-    }
-
-    /// Opens a TCP connection to a remote host with a connection timeout (if specified).
     pub fn connect(uri: &Uri, connect_timeout: Option<Duration>) -> Result<Stream, Error> {
-        let host = uri.host().unwrap_or("");
+        let host = uri.host().ok_or(Error::Parse(ParseErr::UriErr))?;
         let port = uri.corr_port();
 
         let stream = match connect_timeout {
@@ -45,8 +44,9 @@ impl Stream {
     /// Tries to establish a secure connection over TLS.
     ///
     /// Checks if `uri` scheme denotes a HTTPS protocol:
-    /// - If yes, attemps to establish a secure connection
+    /// - If yes, attempts to establish a secure connection
     /// - Otherwise, returns the `stream` without any modification
+    #[cfg(any(feature = "native-tls", feature = "rust-tls"))]
     pub fn try_to_https(
         stream: Stream,
         uri: &Uri,
@@ -55,7 +55,7 @@ impl Stream {
         match stream {
             Stream::Http(http_stream) => {
                 if uri.scheme() == "https" {
-                    let host = uri.host().unwrap_or("");
+                    let host = uri.host().ok_or(Error::Parse(ParseErr::UriErr))?;
                     let mut cnf = tls::Config::default();
 
                     let cnf = match root_cert_file_pem {
@@ -77,6 +77,7 @@ impl Stream {
     pub fn set_read_timeout(&mut self, dur: Option<Duration>) -> Result<(), Error> {
         match self {
             Stream::Http(stream) => Ok(stream.set_read_timeout(dur)?),
+            #[cfg(any(feature = "native-tls", feature = "rust-tls"))]
             Stream::Https(conn) => Ok(conn.get_mut().set_read_timeout(dur)?),
         }
     }
@@ -85,6 +86,7 @@ impl Stream {
     pub fn set_write_timeout(&mut self, dur: Option<Duration>) -> Result<(), Error> {
         match self {
             Stream::Http(stream) => Ok(stream.set_write_timeout(dur)?),
+            #[cfg(any(feature = "native-tls", feature = "rust-tls"))]
             Stream::Https(conn) => Ok(conn.get_mut().set_write_timeout(dur)?),
         }
     }
@@ -94,6 +96,7 @@ impl Read for Stream {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
         match self {
             Stream::Http(stream) => stream.read(buf),
+            #[cfg(any(feature = "native-tls", feature = "rust-tls"))]
             Stream::Https(stream) => stream.read(buf),
         }
     }
@@ -103,12 +106,15 @@ impl Write for Stream {
     fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
         match self {
             Stream::Http(stream) => stream.write(buf),
+            #[cfg(any(feature = "native-tls", feature = "rust-tls"))]
             Stream::Https(stream) => stream.write(buf),
         }
     }
+
     fn flush(&mut self) -> Result<(), io::Error> {
         match self {
             Stream::Http(stream) => stream.flush(),
+            #[cfg(any(feature = "native-tls", feature = "rust-tls"))]
             Stream::Https(stream) => stream.flush(),
         }
     }
@@ -140,7 +146,7 @@ where
                 Ok(0) | Err(_) => break,
                 Ok(len) => {
                     let filled_buf = buf[..len].to_vec();
-                    if let Err(_) = sender.send(filled_buf) {
+                    if sender.send(filled_buf).is_err() {
                         break;
                     }
                 }
@@ -155,7 +161,7 @@ pub trait ThreadReceive {
     /// Fails if `deadline` is exceeded.
     fn receive(&mut self, receiver: &Receiver<Vec<u8>>, deadline: Instant) -> Result<(), Error>;
 
-    /// Continuosly receives data from `receiver` until there is no more data
+    /// Continuously receives data from `receiver` until there is no more data
     /// or `deadline` is exceeded. Writes received data into this writer.
     fn receive_all(&mut self, receiver: &Receiver<Vec<u8>>, deadline: Instant)
         -> Result<(), Error>;
@@ -167,9 +173,12 @@ where
 {
     fn receive(&mut self, receiver: &Receiver<Vec<u8>>, deadline: Instant) -> Result<(), Error> {
         let now = Instant::now();
-        let data_read = receiver.recv_timeout(deadline - now)?;
 
-        Ok(self.write_all(&data_read)?)
+        match receiver.recv_timeout(deadline - now) {
+            Ok(data_read) => self.write_all(&data_read).map_err(Error::IO),
+            Err(RecvTimeoutError::Timeout) => Err(Error::Timeout),
+            Err(RecvTimeoutError::Disconnected) => Ok(()),
+        }
     }
 
     fn receive_all(
@@ -178,16 +187,16 @@ where
         deadline: Instant,
     ) -> Result<(), Error> {
         execute_with_deadline(deadline, |remaining_time| {
-            let data_read = match receiver.recv_timeout(remaining_time) {
-                Ok(data) => data,
-                Err(e) => match e {
-                    RecvTimeoutError::Timeout => return Err(Error::Timeout),
-                    RecvTimeoutError::Disconnected => return Ok(true),
-                },
-            };
-
-            self.write_all(&data_read).map_err(|e| Error::IO(e))?;
-            Ok(false)
+            match receiver.recv_timeout(remaining_time) {
+                Ok(data_read) => {
+                    if let Err(e) = self.write_all(&data_read) {
+                        return Err(Error::IO(e));
+                    }
+                    Ok(false)
+                }
+                Err(RecvTimeoutError::Timeout) => Err(Error::Timeout),
+                Err(RecvTimeoutError::Disconnected) => Ok(true),
+            }
         })
     }
 }
@@ -223,17 +232,17 @@ where
     ))
 }
 
-/// Exexcutes a function in a loop until operation is completed or deadline is exceeded.
+/// Executes a function in a loop until operation is completed or deadline is exceeded.
 ///
 /// It checks if a timeout was exceeded every iteration, therefore it limits
-/// how many time a specific function can be called before deadline.
-/// For the `execute_with_deadline` to meet the deadline, each call
-/// to `func` needs finish before the deadline.
+/// how many times a specific function can be called before the deadline.
+/// For `execute_with_deadline` to meet the deadline, each call
+/// to `func` needs to finish before the deadline.
 ///
 /// Key information about function `func`:
 /// - is provided with information about remaining time
 /// - must ensure that its execution will not take more time than specified in `remaining_time`
-/// - needs to return `Some(true)` when the operation is complete, and `Some(false)` - when operation is in progress
+/// - needs to return `Some(true)` when the operation is complete, and `Some(false)` - when the operation is in progress
 pub fn execute_with_deadline<F>(deadline: Instant, mut func: F) -> Result<(), Error>
 where
     F: FnMut(Duration) -> Result<bool, Error>,
@@ -259,7 +268,7 @@ where
 /// Reads the head of HTTP response from `reader`.
 ///
 /// Reads from `reader` (line by line) until a blank line is identified,
-/// which indicates that all meta-information has been read,
+/// which indicates that all meta-information has been read.
 pub fn read_head<B>(reader: &mut B) -> Vec<u8>
 where
     B: BufRead,
@@ -318,6 +327,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(feature = "native-tls", feature = "rust-tls"))]
     fn stream_try_to_https() {
         {
             let uri = Uri::try_from(URI_S).unwrap();
@@ -362,6 +372,7 @@ mod tests {
 
             assert_eq!(inner_read_timeout, Some(TIMEOUT));
         }
+        #[cfg(any(feature = "native-tls", feature = "rust-tls"))]
         {
             let uri = Uri::try_from(URI_S).unwrap();
             let mut stream = Stream::connect(&uri, None).unwrap();
@@ -393,6 +404,7 @@ mod tests {
 
             assert_eq!(inner_read_timeout, Some(TIMEOUT));
         }
+        #[cfg(any(feature = "native-tls", feature = "rust-tls"))]
         {
             let uri = Uri::try_from(URI_S).unwrap();
             let mut stream = Stream::connect(&uri, None).unwrap();
