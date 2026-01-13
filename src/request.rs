@@ -925,8 +925,11 @@ impl<'a> Request<'a> {
 
         #[cfg(feature = "tracing")]
         {
-            let status: u16 = response.status_code().into();
-            Span::current().record("http.status_code", i64::from(status));
+            if let Ok(ref resp) = response {
+                Span::current().record("http.status_code", i64::from(resp.status_code().into()));
+            } else {
+                Span::current().record("otel.status_code", "ERROR");
+            }
             Span::current().record("http.duration_ms", start.elapsed().as_millis() as i64);
         }
 
