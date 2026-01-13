@@ -889,10 +889,10 @@ impl<'a> Request<'a> {
         #[cfg(feature = "tracing")]
         let span = tracing::info_span!(
             "http_request",
-            otel.name = %format!("{} {}", self.message.method, self.message.uri.host().unwrap_or("")),
+            otel.name = %format!("{} {}", self.inner.method, self.inner.uri.host().unwrap_or("")),
             otel.kind = "client",
-            http.method = %self.message.method,
-            http.url = %self.message.uri,
+            http.method = %self.inner.method,
+            http.url = %self.inner.uri,
             http.status_code = tracing::field::Empty,
             http.duration_ms = tracing::field::Empty,
         );
@@ -926,7 +926,7 @@ impl<'a> Request<'a> {
         #[cfg(feature = "tracing")]
         {
             if let Ok(ref resp) = response {
-                Span::current().record("http.status_code", i64::from(resp.status_code().into()));
+                Span::current().record("http.status_code", u16::from(resp.status_code()));
             } else {
                 Span::current().record("otel.status_code", "ERROR");
             }
