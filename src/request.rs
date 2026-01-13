@@ -897,7 +897,7 @@ impl<'a> Request<'a> {
             http.duration_ms = tracing::field::Empty,
         );
         #[cfg(feature = "tracing")]
-        let _guard = span.enter();
+        let guard = span.entered();
         #[cfg(feature = "tracing")]
         let start = Instant::now();
 
@@ -931,6 +931,7 @@ impl<'a> Request<'a> {
                 Span::current().record("otel.status_code", "ERROR");
             }
             Span::current().record("http.duration_ms", start.elapsed().as_millis() as i64);
+            guard.exit();
         }
 
         response
