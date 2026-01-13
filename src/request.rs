@@ -479,6 +479,21 @@ impl<'a> RequestBuilder<'a> {
         T: Write + Read,
         U: Write,
     {
+        #[cfg(feature = "tracing")]
+        let span = tracing::info_span!(
+            "http_request",
+            otel.name = %format!("{} {}", self.method, self.uri.host().unwrap_or("")),
+            otel.kind = "client",
+            http.method = %self.method,
+            http.url = %self.uri,
+            http.status_code = tracing::field::Empty,
+            http.duration_ms = tracing::field::Empty,
+        );
+        #[cfg(feature = "tracing")]
+        let _guard = span.enter();
+        #[cfg(feature = "tracing")]
+        let start = Instant::now();
+
         self.write_msg(stream, &self.parse_msg())?;
 
         let head_deadline = match self.timeout {
@@ -487,7 +502,15 @@ impl<'a> RequestBuilder<'a> {
         };
         let (res, body_part) = self.read_head(stream, head_deadline)?;
 
+        #[cfg(feature = "tracing")]
+        {
+            let status: u16 = res.status_code().into();
+            Span::current().record("http.status_code", status as i64);
+        }
+
         if self.method == Method::HEAD {
+            #[cfg(feature = "tracing")]
+            Span::current().record("http.duration_ms", start.elapsed().as_millis() as i64);
             return Ok(res);
         }
 
@@ -502,6 +525,8 @@ impl<'a> RequestBuilder<'a> {
                     io::copy(&mut dechunked, writer)?;
                 }
 
+                #[cfg(feature = "tracing")]
+                Span::current().record("http.duration_ms", start.elapsed().as_millis() as i64);
                 return Ok(res);
             }
         }
@@ -520,6 +545,9 @@ impl<'a> RequestBuilder<'a> {
                 io::copy(stream, writer)?;
             }
         }
+
+        #[cfg(feature = "tracing")]
+        Span::current().record("http.duration_ms", start.elapsed().as_millis() as i64);
 
         Ok(res)
     }
@@ -897,11 +925,9 @@ impl<'a> Request<'a> {
             http.duration_ms = tracing::field::Empty,
         );
         #[cfg(feature = "tracing")]
-        let guard = span.entered();
+        let _guard = span.entered();
         #[cfg(feature = "tracing")]
         let start = Instant::now();
-        #[cfg(feature = "tracing")]
-        tracing::info!(target: "http_req", "HTTP request starting to {}", self.inner.uri);
 
         let host = self.inner.uri.host().unwrap_or("");
         let port = self.inner.uri.corr_port();
@@ -933,7 +959,6 @@ impl<'a> Request<'a> {
                 Span::current().record("otel.status_code", "ERROR");
             }
             Span::current().record("http.duration_ms", start.elapsed().as_millis() as i64);
-            guard.exit();
         }
 
         response
