@@ -842,8 +842,6 @@ impl<'a> Request<'a> {
         );
         #[cfg(feature = "tracing")]
         let _guard = span.entered();
-        #[cfg(feature = "tracing")]
-        let start = Instant::now();
 
         // Set up a stream.
         let mut stream = Stream::connect(self.message.uri, self.connect_timeout)?;
@@ -866,6 +864,9 @@ impl<'a> Request<'a> {
         let mut raw_response_head: Vec<u8> = Vec::new();
         let mut buf_reader = BufReader::new(stream);
 
+        #[cfg(feature = "tracing")]
+        let start = Instant::now();
+
         // Read from the stream and send over data via `sender`.
         thread::spawn(move || {
             buf_reader.send_head(&sender);
@@ -887,6 +888,7 @@ impl<'a> Request<'a> {
 
         #[cfg(feature = "tracing")]
         {
+            Span::current().record("http.duration_ms", start.elapsed().as_millis() as i64);
             let status: u16 = response.status_code().into();
             Span::current().record("http.status_code", status as i64);
         }
@@ -900,9 +902,6 @@ impl<'a> Request<'a> {
                     } else {
                         Uri::try_from(raw_uri.as_str())
                     }?;
-
-                    #[cfg(feature = "tracing")]
-                    Span::current().record("http.duration_ms", start.elapsed().as_millis() as i64);
 
                     return Request::new(&uri)
                         .redirect_policy(self.redirect_policy)
@@ -919,9 +918,6 @@ impl<'a> Request<'a> {
         if content_len > 0 {
             writer.receive_all(&receiver, deadline)?;
         }
-
-        #[cfg(feature = "tracing")]
-        Span::current().record("http.duration_ms", start.elapsed().as_millis() as i64);
 
         Ok(response)
     }
