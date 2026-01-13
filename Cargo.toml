@@ -12,10 +12,12 @@ edition = "2021"
 
 [dependencies]
 unicase = "^2.6"
+tracing = { version = "0.1", optional = true }
 
 [features]
 default = ["native-tls"]
 rust-tls = ["rustls", "webpki", "webpki-roots"]
+tracing = ["dep:tracing"]
 
 [dependencies.native-tls]
 version = "^0.2"

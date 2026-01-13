@@ -12,6 +12,8 @@ use std::{
     path::Path,
     time::{Duration, Instant},
 };
+#[cfg(feature = "tracing")]
+use tracing::Span;
 
 const CR_LF: &str = "\r\n";
 const BUF_SIZE: usize = 8 * 1024;
@@ -884,6 +886,21 @@ impl<'a> Request<'a> {
     ///let response = Request::new(&uri).send(&mut writer).unwrap();
     ///```
     pub fn send<T: Write>(&self, writer: &mut T) -> Result<Response, error::Error> {
+        #[cfg(feature = "tracing")]
+        let span = tracing::info_span!(
+            "http_request",
+            otel.name = %format!("{} {}", self.message.method, self.message.uri.host().unwrap_or("")),
+            otel.kind = "client",
+            http.method = %self.message.method,
+            http.url = %self.message.uri,
+            http.status_code = tracing::field::Empty,
+            http.duration_ms = tracing::field::Empty,
+        );
+        #[cfg(feature = "tracing")]
+        let _guard = span.enter();
+        #[cfg(feature = "tracing")]
+        let start = Instant::now();
+
         let host = self.inner.uri.host().unwrap_or("");
         let port = self.inner.uri.corr_port();
         let mut stream = match self.connect_timeout {
@@ -894,7 +911,7 @@ impl<'a> Request<'a> {
         stream.set_read_timeout(self.read_timeout)?;
         stream.set_write_timeout(self.write_timeout)?;
 
-        if self.inner.uri.scheme() == "https" {
+        let response = if self.inner.uri.scheme() == "https" {
             let mut cnf = tls::Config::default();
             let cnf = match self.root_cert_file_pem {
                 Some(p) => cnf.add_root_cert_file_pem(p)?,
@@ -904,7 +921,16 @@ impl<'a> Request<'a> {
             self.inner.send(&mut stream, writer)
         } else {
             self.inner.send(&mut stream, writer)
+        };
+
+        #[cfg(feature = "tracing")]
+        {
+            let status: u16 = response.status_code().into();
+            Span::current().record("http.status_code", i64::from(status));
+            Span::current().record("http.duration_ms", start.elapsed().as_millis() as i64);
         }
+
+        response
     }
 }
 
