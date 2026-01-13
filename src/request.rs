@@ -900,6 +900,8 @@ impl<'a> Request<'a> {
         let guard = span.entered();
         #[cfg(feature = "tracing")]
         let start = Instant::now();
+        #[cfg(feature = "tracing")]
+        tracing::info!(target: "http_req", "HTTP request starting to {}", self.inner.uri);
 
         let host = self.inner.uri.host().unwrap_or("");
         let port = self.inner.uri.corr_port();
