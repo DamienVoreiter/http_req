@@ -27,7 +27,7 @@ pub struct Conn<S: io::Read + io::Write> {
     stream: native_tls::TlsStream<S>,
 
     #[cfg(feature = "rust-tls")]
-    stream: rustls::StreamOwned<rustls::ClientConnection, S>,
+    pub stream: rustls::StreamOwned<rustls::ClientConnection, S>,
 }
 
 impl<S> Conn<S>
@@ -199,4 +199,17 @@ impl Config {
 
         Ok(Conn { stream })
     }
+}
+
+/// Establishes a secure connection using a pre-built `rustls::ClientConfig`.
+/// Use this when you need a custom root store, client certificate, or certificate verifier.
+#[cfg(feature = "rust-tls")]
+pub fn connect_with_config<H, S>(config: std::sync::Arc<rustls::ClientConfig>, hostname: H, stream: S) -> Result<Conn<S>, HttpError>
+where
+    H: AsRef<str>,
+    S: io::Read + io::Write,
+{
+    let hostname = hostname.as_ref().to_string();
+    let session = ClientConnection::new(config, ServerName::try_from(hostname).map_err(|_| HttpError::Tls)?).map_err(|_| HttpError::Tls)?;
+    Ok(Conn { stream: StreamOwned::new(session, stream) })
 }
