@@ -73,6 +73,24 @@ impl Stream {
         }
     }
 
+    /// Tries to establish a secure connection using a pre-built `rustls::ClientConfig`.
+    /// Use this when you need a custom root store, client certificate, or certificate verifier.
+    #[cfg(feature = "rust-tls")]
+    pub fn try_to_https_with_config(stream: Stream, uri: &Uri, config: std::sync::Arc<rustls::ClientConfig>) -> Result<Stream, Error> {
+        match stream {
+            Stream::Http(http_stream) => {
+                if uri.scheme() == "https" {
+                    let host = uri.host().ok_or(Error::Parse(ParseErr::UriErr))?;
+                    let conn = tls::connect_with_config(config, host, http_stream)?;
+                    Ok(Stream::Https(conn))
+                } else {
+                    Ok(Stream::Http(http_stream))
+                }
+            }
+            Stream::Https(_) => Ok(stream),
+        }
+    }
+
     /// Sets the read timeout on the underlying TCP stream.
     pub fn set_read_timeout(&mut self, dur: Option<Duration>) -> Result<(), Error> {
         match self {

@@ -499,7 +499,7 @@ impl<'a> RequestMessage<'a> {
 /// assert_eq!(response.status_code(), StatusCode::new(200));
 /// ```
 ///
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Request<'a> {
     message: RequestMessage<'a>,
     redirect_policy: RedirectPolicy<fn(&str) -> bool>,
@@ -508,6 +508,8 @@ pub struct Request<'a> {
     write_timeout: Option<Duration>,
     timeout: Duration,
     root_cert_file_pem: Option<&'a Path>,
+    #[cfg(feature = "rust-tls")]
+    rustls_config: Option<std::sync::Arc<rustls::ClientConfig>>,
 }
 
 impl<'a> Request<'a> {
@@ -534,6 +536,8 @@ impl<'a> Request<'a> {
             write_timeout: Some(Duration::from_secs(DEFAULT_CALL_TIMEOUT)),
             timeout: Duration::from_secs(DEFAULT_REQ_TIMEOUT),
             root_cert_file_pem: None,
+            #[cfg(feature = "rust-tls")]
+            rustls_config: None,
         }
     }
 
@@ -788,6 +792,15 @@ impl<'a> Request<'a> {
         self
     }
 
+    /// Sets a custom rustls `ClientConfig` to use for the TLS connection.
+    /// When set, overrides `root_cert_file_pem` and allows full control over
+    /// the root store, client certificate, and certificate verifier.
+    #[cfg(feature = "rust-tls")]
+    pub fn rustls_config(&mut self, config: std::sync::Arc<rustls::ClientConfig>) -> &mut Self {
+        self.rustls_config = Some(config);
+        self
+    }
+
     /// Sets the redirect policy for the request.
     ///
     /// # Examples
@@ -833,9 +846,16 @@ impl<'a> Request<'a> {
         stream.set_read_timeout(self.read_timeout)?;
         stream.set_write_timeout(self.write_timeout)?;
 
-        #[cfg(any(feature = "native-tls", feature = "rust-tls"))]
+        #[cfg(feature = "native-tls")]
         {
             stream = Stream::try_to_https(stream, self.message.uri, self.root_cert_file_pem)?;
+        }
+        #[cfg(feature = "rust-tls")]
+        {
+            stream = match self.rustls_config.take() {
+                Some(config) => Stream::try_to_https_with_config(stream, self.message.uri, config)?,
+                None => Stream::try_to_https(stream, self.message.uri, self.root_cert_file_pem)?,
+            };
         }
 
         // Send the request message to the stream.
